@@ -1,6 +1,9 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import ridersRouter from "./routes/riders.js";
 import adminRouter from "./routes/admin.js";
 import ridesRouter from "./routes/rides.js";
@@ -24,6 +27,15 @@ app.use("/api/riders", ridersRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/rides", ridesRouter);
 app.use("/api/locations", locationsRouter);
+
+// In production, serve the built React app (client/dist) from this same server
+// so the client's relative "/api" calls hit this API with no extra config.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDist = path.join(__dirname, "..", "..", "client", "dist");
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(clientDist, "index.html")));
+}
 
 app.use((err, req, res, _next) => {
   if (err?.message) {
