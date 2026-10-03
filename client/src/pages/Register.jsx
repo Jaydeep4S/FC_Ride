@@ -136,8 +136,8 @@ export default function Register() {
             </span>
             <input
               type="file"
-              required
               accept=".jpg,.jpeg,.png,.webp"
+              capture="user"
               className="hidden"
               onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
             />

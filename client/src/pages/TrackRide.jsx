@@ -30,7 +30,7 @@ function geoErrorMessage(err) {
     return "Couldn't determine your location. Try again outdoors with GPS enabled.";
   }
   if (err.code === err.TIMEOUT) {
-    return "Location request timed out. Check your GPS signal and try again.";
+    return "Still waiting for a GPS fix — this can take up to 30s outdoors, longer indoors. Tracking will pick up automatically once found.";
   }
   return "Something went wrong reading your location.";
 }
@@ -50,6 +50,10 @@ export default function TrackRide() {
   const [justSaved, setJustSaved] = useState(null);
   const [resumedNotice, setResumedNotice] = useState(false);
   const [pendingCounts, setPendingCounts] = useState({ locations: 0, rides: 0 });
+  const [syncFailedRide, setSyncFailedRide] = useState(null);
+  const [myAlertId, setMyAlertId] = useState(() => localStorage.getItem(`fc_my_alert_${riderId}`));
+  const [sosBusy, setSosBusy] = useState(false);
+  const [sosError, setSosError] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
@@ -171,8 +175,18 @@ export default function TrackRide() {
         setJustSaved({ id, ...next });
         const refreshed = await api.getRiderRides(riderId);
         setRides(refreshed);
-      } catch {
-        // still offline — retried on the next tick
+      } catch (err) {
+        if (err instanceof TypeError) {
+          // No signal reached at all — stays queued, retried next tick.
+        } else {
+          // The server was reached and rejected this ride outright — retrying
+          // forever won't fix that, so stop looping on it and say so clearly
+          // instead of it just silently never showing up.
+          pendingRidesRef.current = rest;
+          savePendingRides(riderId, rest);
+          updatePendingCounts();
+          setSyncFailedRide({ ...next, reason: err.message });
+        }
       }
     }
   }
@@ -180,6 +194,7 @@ export default function TrackRide() {
   function armWatch() {
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
+        setGeoError("");
         const { latitude, longitude, accuracy } = pos.coords;
         if (accuracy && accuracy > MIN_ACCURACY_M) return;
 
@@ -204,7 +219,7 @@ export default function TrackRide() {
         queueLocation({ lat: latitude, lng: longitude, recordedAt });
       },
       (err) => setGeoError(geoErrorMessage(err)),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
     );
   }
 
@@ -269,6 +284,38 @@ export default function TrackRide() {
     }
   }
 
+  async function sendSos() {
+    if (!window.confirm("Send a HELP alert to everyone on the ride? Every open screen will sound an alarm until silenced.")) {
+      return;
+    }
+    const last = points[points.length - 1];
+    setSosBusy(true);
+    setSosError("");
+    try {
+      const { id } = await api.createAlert(riderId, last?.[0] ?? null, last?.[1] ?? null);
+      localStorage.setItem(`fc_my_alert_${riderId}`, id);
+      setMyAlertId(id);
+    } catch (err) {
+      setSosError(err.message);
+    } finally {
+      setSosBusy(false);
+    }
+  }
+
+  async function imSafe() {
+    setSosBusy(true);
+    setSosError("");
+    try {
+      await api.resolveAlert(myAlertId, riderId);
+      localStorage.removeItem(`fc_my_alert_${riderId}`);
+      setMyAlertId(null);
+    } catch (err) {
+      setSosError(err.message);
+    } finally {
+      setSosBusy(false);
+    }
+  }
+
   if (riderError) {
     return (
       <div className="mx-auto max-w-md px-4 py-16 text-center">
@@ -314,6 +361,55 @@ export default function TrackRide() {
           </div>
         )}
 
+        {syncFailedRide && (
+          <div className="card border-2 border-red-300 bg-red-50 p-4">
+            <p className="text-sm font-bold text-red-700">
+              ⚠️ A ride couldn't be saved and was dropped: {syncFailedRide.reason}
+            </p>
+            <p className="mt-1 text-xs text-red-600">
+              {syncFailedRide.distanceKm.toFixed(2)} km on{" "}
+              {new Date(syncFailedRide.startedAt).toLocaleString()}. If this keeps happening,
+              tell whoever manages this app.
+            </p>
+            <button
+              onClick={() => setSyncFailedRide(null)}
+              className="mt-2 pill bg-white px-3 py-1 text-red-700"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        <div className="card border-2 border-red-200 p-5">
+          <p className="font-display text-base font-extrabold text-ink">Need help?</p>
+          <p className="mb-3 text-sm text-muted">
+            Raises an alarm on every rider's and admin's screen until someone silences it.
+          </p>
+          {myAlertId ? (
+            <div className="space-y-2">
+              <p className="rounded-2xl bg-red-100 p-3 text-sm font-bold text-red-700">
+                🆘 Help request sent — the group has been alerted.
+              </p>
+              <button
+                onClick={imSafe}
+                disabled={sosBusy}
+                className="w-full rounded-2xl bg-emerald-600 px-5 py-3 font-display text-lg font-bold text-white disabled:opacity-60"
+              >
+                ✅ I'm safe now
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={sendSos}
+              disabled={sosBusy}
+              className="w-full rounded-2xl bg-red-600 px-5 py-3 font-display text-lg font-bold text-white shadow-softSm disabled:opacity-60"
+            >
+              🆘 I need help
+            </button>
+          )}
+          {sosError && <p className="mt-2 text-sm font-bold text-red-600">{sosError}</p>}
+        </div>
+
         <div className="card p-5">
           <RideMap points={points} live={tracking} height={240} />
 
@@ -324,7 +420,11 @@ export default function TrackRide() {
           </div>
 
           {geoError && (
-            <p className="mt-4 rounded-2xl bg-red-100 p-3 text-sm font-bold text-red-600">
+            <p
+              className={`mt-4 rounded-2xl p-3 text-sm font-bold ${
+                tracking ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"
+              }`}
+            >
               {geoError}
             </p>
           )}

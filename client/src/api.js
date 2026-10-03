@@ -70,6 +70,16 @@ export const api = {
     return handle(res);
   },
 
+  async adminCreateRider(formData) {
+    const res = await fetch(`${BASE}/admin/riders`, { method: "POST", headers: authHeaders(), body: formData });
+    return handle(res);
+  },
+
+  async adminDeleteRider(id) {
+    const res = await fetch(`${BASE}/admin/riders/${id}`, { method: "DELETE", headers: authHeaders() });
+    return handle(res);
+  },
+
   async adminReview(id, status, reviewNote) {
     const res = await fetch(`${BASE}/admin/riders/${id}`, {
       method: "PATCH",
@@ -124,6 +134,29 @@ export const api = {
 
   async adminGetFlaggedRides() {
     const res = await fetch(`${BASE}/admin/flagged-rides`, { headers: authHeaders() });
+    return handle(res);
+  },
+
+  async createAlert(riderId, lat, lng) {
+    const res = await fetch(`${BASE}/alerts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ riderId, lat, lng }),
+    });
+    return handle(res);
+  },
+
+  async getActiveAlerts() {
+    const res = await fetch(`${BASE}/alerts/active`);
+    return handle(res);
+  },
+
+  async resolveAlert(id, riderId) {
+    const res = await fetch(`${BASE}/alerts/${id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ riderId }),
+    });
     return handle(res);
   },
 

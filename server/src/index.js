@@ -8,6 +8,7 @@ import ridersRouter from "./routes/riders.js";
 import adminRouter from "./routes/admin.js";
 import ridesRouter from "./routes/rides.js";
 import locationsRouter from "./routes/locations.js";
+import alertsRouter from "./routes/alerts.js";
 
 const requiredEnv = ["ADMIN_USERNAME", "ADMIN_PASSWORD", "JWT_SECRET"];
 for (const key of requiredEnv) {
@@ -27,6 +28,7 @@ app.use("/api/riders", ridersRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/rides", ridesRouter);
 app.use("/api/locations", locationsRouter);
+app.use("/api/alerts", alertsRouter);
 
 // In production, serve the built React app (client/dist) from this same server
 // so the client's relative "/api" calls hit this API with no extra config.

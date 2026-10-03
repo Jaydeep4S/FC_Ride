@@ -73,6 +73,20 @@ export default function AdminRiderDetail() {
     }
   }
 
+  async function deleteRider() {
+    if (!window.confirm(`Permanently delete ${rider.name}? This also removes their rides, GPS history and alerts. It cannot be undone.`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.adminDeleteRider(id);
+      navigate("/admin/dashboard");
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
   async function copyTrackingLink() {
     const url = `${window.location.origin}/rides/${id}`;
     try {
@@ -167,6 +181,22 @@ export default function AdminRiderDetail() {
               ❌ Reject
             </button>
           )}
+          {rider.status === "approved" && (
+            <button
+              onClick={() => review("removed")}
+              disabled={busy}
+              className="pill bg-amber-100 px-3 py-1.5 text-amber-700 disabled:opacity-60"
+            >
+              🗑 Remove from board
+            </button>
+          )}
+          <button
+            onClick={deleteRider}
+            disabled={busy}
+            className="pill bg-red-600 px-3 py-1.5 text-white disabled:opacity-60"
+          >
+            Delete permanently
+          </button>
         </div>
       </div>
 

@@ -1,10 +1,16 @@
 import express from "express";
 import crypto from "node:crypto";
-import { readTable, mutateTable } from "../db.js";
+import { db, readTable } from "../db.js";
 
 const router = express.Router();
 const RETENTION_MS = 48 * 60 * 60 * 1000; // keep 48h of breadcrumb history
 const MAX_POINTS_PER_REQUEST = 500;
+
+const insertPoint = db.prepare(
+  `INSERT INTO locations (id, riderId, lat, lng, recordedAt, receivedAt)
+   VALUES (@id, @riderId, @lat, @lng, @recordedAt, @receivedAt)`
+);
+const pruneOld = db.prepare(`DELETE FROM locations WHERE recordedAt < ?`);
 
 function isFiniteNumber(n) {
   return typeof n === "number" && Number.isFinite(n);
@@ -29,7 +35,7 @@ function isValidPoint(p) {
 router.post("/", (req, res) => {
   const { riderId, points } = req.body || {};
 
-  const rider = readTable("riders").find((r) => r.id === riderId);
+  const rider = db.prepare("SELECT id FROM riders WHERE id = ?").get(riderId);
   if (!rider) return res.status(404).json({ error: "Rider not found." });
 
   if (!Array.isArray(points) || points.length === 0) {
@@ -43,24 +49,20 @@ router.post("/", (req, res) => {
   }
 
   const now = Date.now();
-  mutateTable("locations", (rows) => {
-    // Prune old breadcrumbs opportunistically so this file doesn't grow forever.
-    const cutoff = now - RETENTION_MS;
-    let i = rows.length;
-    while (i--) {
-      if (new Date(rows[i].recordedAt).getTime() < cutoff) rows.splice(i, 1);
-    }
+  const receivedAt = new Date(now).toISOString();
+  db.transaction(() => {
+    pruneOld.run(new Date(now - RETENTION_MS).toISOString());
     for (const p of points) {
-      rows.push({
+      insertPoint.run({
         id: crypto.randomUUID(),
         riderId,
         lat: p.lat,
         lng: p.lng,
         recordedAt: p.recordedAt,
-        receivedAt: new Date(now).toISOString(),
+        receivedAt,
       });
     }
-  });
+  })();
 
   res.status(201).json({ ok: true, count: points.length });
 });

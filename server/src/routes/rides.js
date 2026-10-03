@@ -46,7 +46,12 @@ router.post("/", (req, res) => {
   if (!Number.isInteger(durationSeconds) || durationSeconds <= 0 || durationSeconds > 86400) {
     errors.push("Duration must be a sane number of seconds.");
   }
-  if (!isFiniteNumber(avgSpeedKmh) || avgSpeedKmh < 0 || avgSpeedKmh > 120) {
+  // Generous ceiling — this only needs to catch corrupted/impossible data
+  // (a GPS glitch computing thousands of km/h). Real vehicle speeds (a car,
+  // a train) must be allowed through so the sustained-speed cheat detector
+  // below actually gets a chance to flag them, instead of the ride being
+  // silently rejected before it's ever saved.
+  if (!isFiniteNumber(avgSpeedKmh) || avgSpeedKmh < 0 || avgSpeedKmh > 220) {
     errors.push("Average speed is not valid.");
   }
   if (Number.isNaN(new Date(startedAt).getTime()) || Number.isNaN(new Date(endedAt).getTime())) {

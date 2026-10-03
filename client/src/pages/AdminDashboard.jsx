@@ -8,6 +8,7 @@ const TABS = [
   { key: "pending", label: "Pending", icon: "⏳" },
   { key: "approved", label: "Approved", icon: "✅" },
   { key: "rejected", label: "Rejected", icon: "❌" },
+  { key: "removed", label: "Removed", icon: "🗑️" },
   { key: "all", label: "All riders", icon: "📋" },
 ];
 
@@ -94,6 +95,21 @@ export default function AdminDashboard() {
     }
   }
 
+  async function deleteRider(r) {
+    if (!window.confirm(`Permanently delete ${r.name}? This also removes their rides, GPS history and alerts. It cannot be undone.`)) {
+      return;
+    }
+    setBusyId(r.id);
+    try {
+      await api.adminDeleteRider(r.id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function copyTrackingLink(id) {
     const url = `${window.location.origin}/rides/${id}`;
     try {
@@ -135,6 +151,12 @@ export default function AdminDashboard() {
                 </button>
               ))}
             </nav>
+            <Link
+              to="/admin/riders/new"
+              className="mt-2 flex items-center gap-3 rounded-2xl bg-primary px-3 py-2.5 text-left font-display text-sm font-bold text-white transition hover:opacity-90"
+            >
+              ➕ Add rider
+            </Link>
             <Link
               to="/admin/live"
               className="mt-2 flex items-center gap-3 rounded-2xl bg-night px-3 py-2.5 text-left font-display text-sm font-bold text-white transition hover:opacity-90"
@@ -268,6 +290,22 @@ export default function AdminDashboard() {
                       ❌ Reject
                     </button>
                   )}
+                  {r.status === "approved" && (
+                    <button
+                      onClick={() => review(r.id, "removed")}
+                      disabled={busyId === r.id}
+                      className="pill bg-amber-100 px-3 py-1.5 text-amber-700 disabled:opacity-60"
+                    >
+                      🗑 Remove from board
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteRider(r)}
+                    disabled={busyId === r.id}
+                    className="pill bg-red-600 px-3 py-1.5 text-white disabled:opacity-60"
+                  >
+                    Delete permanently
+                  </button>
                 </div>
               </div>
             ))}

@@ -1,20 +1,79 @@
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Papa from "papaparse";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, "..", "data");
 fs.mkdirSync(dataDir, { recursive: true });
 
-const FILES = {
-  riders: path.join(dataDir, "riders.csv"),
-  rides: path.join(dataDir, "rides.csv"),
-  counters: path.join(dataDir, "counters.csv"),
-  locations: path.join(dataDir, "locations.csv"),
-};
+export const db = new Database(path.join(dataDir, "fc_ride_squad.sqlite"));
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = OFF");
 
-const COLUMNS = {
+db.exec(`
+  CREATE TABLE IF NOT EXISTS riders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    mobileNumber TEXT NOT NULL,
+    emergencyMobileNumber TEXT NOT NULL,
+    address TEXT NOT NULL,
+    city TEXT NOT NULL,
+    bloodGroup TEXT NOT NULL,
+    tshirtSize TEXT NOT NULL,
+    birthDate TEXT NOT NULL,
+    photoPath TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    bibNumber INTEGER,
+    reviewNote TEXT,
+    createdAt TEXT NOT NULL,
+    reviewedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS rides (
+    id TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL,
+    distanceKm REAL NOT NULL,
+    durationSeconds INTEGER NOT NULL,
+    avgSpeedKmh REAL NOT NULL,
+    startedAt TEXT NOT NULL,
+    endedAt TEXT NOT NULL,
+    path TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    flagged INTEGER,
+    flagReason TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_rides_rider ON rides (riderId);
+
+  CREATE TABLE IF NOT EXISTS locations (
+    id TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    recordedAt TEXT NOT NULL,
+    receivedAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_locations_rider_time ON locations (riderId, recordedAt);
+  CREATE INDEX IF NOT EXISTS idx_locations_time ON locations (recordedAt);
+
+  CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL,
+    lat REAL,
+    lng REAL,
+    message TEXT,
+    createdAt TEXT NOT NULL,
+    resolvedAt TEXT,
+    resolvedBy TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS counters (
+    name TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+  );
+`);
+
+export const COLUMNS = {
   riders: [
     "id", "name", "mobileNumber", "emergencyMobileNumber", "address", "city",
     "bloodGroup", "tshirtSize", "birthDate", "photoPath", "status", "bibNumber",
@@ -24,72 +83,81 @@ const COLUMNS = {
     "id", "riderId", "distanceKm", "durationSeconds", "avgSpeedKmh",
     "startedAt", "endedAt", "path", "createdAt", "flagged", "flagReason",
   ],
-  counters: ["name", "value"],
   locations: ["id", "riderId", "lat", "lng", "recordedAt", "receivedAt"],
+  alerts: ["id", "riderId", "lat", "lng", "message", "createdAt", "resolvedAt", "resolvedBy"],
+  counters: ["name", "value"],
 };
 
-const NUMERIC_FIELDS = {
+export const NUMERIC_FIELDS = {
   riders: new Set(["bibNumber"]),
   rides: new Set(["distanceKm", "durationSeconds", "avgSpeedKmh", "flagged"]),
-  counters: new Set(["value"]),
   locations: new Set(["lat", "lng"]),
+  alerts: new Set(["lat", "lng"]),
+  counters: new Set(["value"]),
 };
 
-function ensureFile(table) {
-  const file = FILES[table];
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, Papa.unparse({ fields: COLUMNS[table], data: [] }), "utf8");
+const KEYS = { riders: "id", rides: "id", locations: "id", alerts: "id", counters: "name" };
+
+const statements = {};
+for (const table of Object.keys(COLUMNS)) {
+  const cols = COLUMNS[table];
+  const key = KEYS[table];
+  const updates = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(", ");
+  statements[table] = {
+    upsert: db.prepare(
+      `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map((c) => `@${c}`).join(", ")})
+       ON CONFLICT(${key}) DO UPDATE SET ${updates}`
+    ),
+    remove: db.prepare(`DELETE FROM ${table} WHERE ${key} = ?`),
+  };
+}
+
+function toParams(table, row) {
+  const params = {};
+  for (const c of COLUMNS[table]) {
+    const v = row[c];
+    params[c] = v === undefined || v === "" ? null : typeof v === "boolean" ? (v ? 1 : 0) : v;
   }
+  return params;
 }
 
 function readAll(table) {
-  ensureFile(table);
-  const raw = fs.readFileSync(FILES[table], "utf8");
-  const { data } = Papa.parse(raw, { header: true, skipEmptyLines: true });
-  const numeric = NUMERIC_FIELDS[table] || new Set();
-  const idColumn = COLUMNS[table][0];
-
-  return data
-    // Guard against any stray trailing-newline artifact being parsed as a
-    // bogus extra row — every real row has a real value in its id column.
-    .filter((row) => row[idColumn] && row[idColumn].trim() !== "")
-    .map((row) => {
-      const out = {};
-      for (const col of COLUMNS[table]) {
-        let v = row[col];
-        if (v === undefined || v === "") v = null;
-        else if (numeric.has(col)) v = Number(v);
-        out[col] = v;
-      }
-      return out;
-    });
-}
-
-function writeAll(table, rows) {
-  const cols = COLUMNS[table];
-  const csv = Papa.unparse({
-    fields: cols,
-    data: rows.map((r) => cols.map((c) => (r[c] === null || r[c] === undefined ? "" : r[c]))),
-  });
-  const file = FILES[table];
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, csv, "utf8");
-  fs.renameSync(tmp, file);
+  return db.prepare(`SELECT ${COLUMNS[table].join(", ")} FROM ${table} ORDER BY rowid`).all();
 }
 
 export function readTable(table) {
   return readAll(table);
 }
 
-// Read the table, let `mutator` inspect/mutate the row array (push new rows,
-// edit fields in place, etc.) and optionally return a value, then persist it.
-// This is safe without an explicit lock: these are synchronous fs calls, and
-// Node's single-threaded event loop can't interleave another request's code
-// between the read and the write within one call.
+export function insertRows(table, rows) {
+  db.transaction(() => {
+    for (const row of rows) statements[table].upsert.run(toParams(table, row));
+  })();
+}
+
+// Read the table, let `mutator` change the row array (push, edit, filter in
+// place), then write back only what changed and delete what was removed —
+// all in one transaction, so a crash mid-write can't leave a half-updated table.
 export function mutateTable(table, mutator) {
-  const rows = readAll(table);
+  const key = KEYS[table];
+  const before = readAll(table);
+  const snapshot = new Map(before.map((r) => [r[key], JSON.stringify(r)]));
+  const rows = before.map((r) => ({ ...r }));
   const result = mutator(rows);
-  writeAll(table, rows);
+
+  db.transaction(() => {
+    const kept = new Set();
+    for (const row of rows) {
+      kept.add(row[key]);
+      if (snapshot.get(row[key]) !== JSON.stringify(row)) {
+        statements[table].upsert.run(toParams(table, row));
+      }
+    }
+    for (const id of snapshot.keys()) {
+      if (!kept.has(id)) statements[table].remove.run(id);
+    }
+  })();
+
   return result;
 }
 
