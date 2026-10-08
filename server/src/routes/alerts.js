@@ -3,18 +3,19 @@ import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { readTable, mutateTable } from "../db.js";
 import { rateLimit } from "../middleware/rateLimit.js";
+import { logAudit, riderActor } from "../lib/audit.js";
 
 const router = express.Router();
 const raiseLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5 });
 
-function isAdmin(req) {
+// Returns the admin's token payload, or null if this isn't an admin request.
+function adminFrom(req) {
   const header = req.headers.authorization || "";
-  if (!header.startsWith("Bearer ")) return false;
+  if (!header.startsWith("Bearer ")) return null;
   try {
-    jwt.verify(header.slice(7), process.env.JWT_SECRET);
-    return true;
+    return jwt.verify(header.slice(7), process.env.JWT_SECRET);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -46,6 +47,13 @@ router.post("/", raiseLimiter, (req, res) => {
     });
   });
 
+  logAudit({
+    riderId,
+    ...riderActor(rider),
+    action: "help_requested",
+    details: hasLocation ? `SOS raised at ${lat.toFixed(5)}, ${lng.toFixed(5)}` : "SOS raised (no location)",
+  });
+
   res.status(201).json({ id });
 });
 
@@ -75,13 +83,15 @@ router.get("/active", (_req, res) => {
 // Resolved by the rider who raised it ("I'm safe"), or by an admin.
 router.post("/:id/resolve", (req, res) => {
   const { riderId } = req.body || {};
-  const admin = isAdmin(req);
+  const admin = adminFrom(req);
+  let alertRiderId = null;
 
   const result = mutateTable("alerts", (rows) => {
     const alert = rows.find((a) => a.id === req.params.id);
     if (!alert) return "notfound";
     if (alert.resolvedAt) return "already";
     if (!admin && alert.riderId !== riderId) return "forbidden";
+    alertRiderId = alert.riderId;
     alert.resolvedAt = new Date().toISOString();
     alert.resolvedBy = admin ? "admin" : "rider";
     return "ok";
@@ -89,6 +99,21 @@ router.post("/:id/resolve", (req, res) => {
 
   if (result === "notfound") return res.status(404).json({ error: "Alert not found." });
   if (result === "forbidden") return res.status(403).json({ error: "Only the rider or an admin can resolve this." });
+
+  if (result === "ok") {
+    const rider = readTable("riders").find((r) => r.id === alertRiderId);
+    const actor = admin
+      ? { actorType: "admin", actorId: admin.username, actorName: admin.username }
+      : rider
+        ? riderActor(rider)
+        : { actorType: "rider", actorId: alertRiderId };
+    logAudit({
+      riderId: alertRiderId,
+      ...actor,
+      action: "help_resolved",
+      details: admin ? "Marked resolved by admin" : "Rider marked themselves safe",
+    });
+  }
   res.json({ ok: true });
 });
 

@@ -10,20 +10,27 @@ const BLOOD_TEXT = {
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
-export default function Leaderboard({ riders }) {
+// onCall is only passed when the viewer is an approved rider; it adds a call
+// button to every row except their own.
+export default function Leaderboard({ riders, myRiderId = null, onCall = null, callingId = null }) {
+  const cols = onCall
+    ? "grid-cols-[2.5rem_1fr_auto_2.75rem] sm:grid-cols-[3rem_1fr_auto_2.75rem]"
+    : "grid-cols-[2.5rem_1fr_auto] sm:grid-cols-[3rem_1fr_auto]";
+
   return (
     <div className="card overflow-hidden">
-      <div className="grid grid-cols-[2.5rem_1fr_auto] items-center gap-2 bg-night px-4 py-3 text-xs font-bold uppercase tracking-wide text-white/70 sm:grid-cols-[3rem_1fr_auto]">
+      <div className={`grid ${cols} items-center gap-2 bg-night px-4 py-3 text-xs font-bold uppercase tracking-wide text-white/70`}>
         <span>#</span>
         <span>Rider</span>
         <span className="text-right">Training</span>
+        {onCall && <span className="text-center">Call</span>}
       </div>
 
       <div className="divide-y divide-surface">
         {riders.map((rider, i) => (
           <div
             key={rider.bibNumber}
-            className={`grid grid-cols-[2.5rem_1fr_auto] items-center gap-2 px-4 py-3 sm:grid-cols-[3rem_1fr_auto] ${
+            className={`grid ${cols} items-center gap-2 px-4 py-3 ${
               i % 2 === 1 ? "bg-surface/50" : ""
             }`}
           >
@@ -57,6 +64,20 @@ export default function Leaderboard({ riders }) {
                 {rider.totalKm > 0 ? `${rider.avgSpeedKmh.toFixed(1)} km/h avg` : "No rides yet"}
               </span>
             </span>
+
+            {onCall &&
+              (rider.id === myRiderId ? (
+                <span className="text-center text-xs font-bold text-muted">You</span>
+              ) : (
+                <button
+                  onClick={() => onCall(rider)}
+                  disabled={callingId === rider.id}
+                  aria-label={`Call ${rider.name}`}
+                  className="flex h-10 w-10 items-center justify-center justify-self-center rounded-full bg-emerald-100 text-lg transition active:scale-95 disabled:opacity-60"
+                >
+                  📞
+                </button>
+              ))}
           </div>
         ))}
       </div>

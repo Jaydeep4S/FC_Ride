@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { getMyRiderId } from "../lib/myRider.js";
 import Hero from "../components/Hero.jsx";
 import Leaderboard from "../components/Leaderboard.jsx";
 
@@ -7,6 +9,9 @@ export default function Board() {
   const [riders, setRiders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [callingId, setCallingId] = useState(null);
+  const [callError, setCallError] = useState("");
+  const myRiderId = getMyRiderId();
 
   useEffect(() => {
     let alive = true;
@@ -19,6 +24,20 @@ export default function Board() {
   }, []);
 
   const totalSquadKm = riders.reduce((sum, r) => sum + (r.totalKm || 0), 0);
+  const iAmOnBoard = !!myRiderId && riders.some((r) => r.id === myRiderId);
+
+  async function callRider(rider) {
+    setCallError("");
+    setCallingId(rider.id);
+    try {
+      const { mobileNumber } = await api.callRider(rider.id, myRiderId);
+      window.location.href = `tel:${mobileNumber}`;
+    } catch (err) {
+      setCallError(err.message);
+    } finally {
+      setCallingId(null);
+    }
+  }
 
   return (
     <div>
@@ -44,7 +63,25 @@ export default function Board() {
           </div>
         )}
 
-        {riders.length > 0 && <Leaderboard riders={riders} />}
+        {riders.length > 0 && !iAmOnBoard && (
+          <p className="mb-4 rounded-2xl bg-primary/10 p-3 text-center text-sm font-bold text-primary">
+            📞 Riding with the squad? Open your tracker once on this phone (
+            <Link to="/rides" className="underline">My Rides</Link>) to call squad mates from here.
+          </p>
+        )}
+
+        {callError && (
+          <p className="mb-4 rounded-2xl bg-red-100 p-3 text-sm font-bold text-red-600">{callError}</p>
+        )}
+
+        {riders.length > 0 && (
+          <Leaderboard
+            riders={riders}
+            myRiderId={myRiderId}
+            onCall={iAmOnBoard ? callRider : null}
+            callingId={callingId}
+          />
+        )}
       </div>
     </div>
   );

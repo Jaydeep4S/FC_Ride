@@ -2,9 +2,10 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { readTable, mutateTable } from "../db.js";
+import { db, readTable, mutateTable } from "../db.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { photosDir, photoUpload, validateRiderInput, MOBILE_RE } from "../lib/riderShared.js";
+import { logAudit, riderActor, riderLabel } from "../lib/audit.js";
 
 const router = express.Router();
 
@@ -54,6 +55,15 @@ router.post("/", photoUpload.single("profilePhoto"), (req, res) => {
     });
   });
 
+  logAudit({
+    riderId: id,
+    actorType: "rider",
+    actorId: id,
+    actorName: name.trim(),
+    action: "registered",
+    details: `Registered from ${city.trim()}`,
+  });
+
   res.status(201).json({ id, status: "pending" });
 });
 
@@ -73,7 +83,52 @@ router.post("/lookup", lookupLimiter, (req, res) => {
   if (matches.length === 0) {
     return res.status(404).json({ error: "No registration found for that mobile number." });
   }
+  logAudit({ riderId: matches[0].id, ...riderActor(matches[0]), action: "link_lookup", details: "Recovered tracking link by mobile number" });
   res.json({ id: matches[0].id, name: matches[0].name });
+});
+
+const callLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30 });
+
+// An approved rider looks up another approved rider's number to call them
+// from the board. Numbers are never on the public board itself — this hands
+// out one number at a time, only to a known rider, and logs who called whom.
+router.post("/:id/call", callLimiter, (req, res) => {
+  const { callerId } = req.body || {};
+  const riders = readTable("riders");
+  const caller = riders.find((r) => r.id === callerId);
+  const target = riders.find((r) => r.id === req.params.id);
+
+  if (!caller || caller.status !== "approved") {
+    return res.status(403).json({ error: "Only approved riders can call squad mates. Open your own tracker link first." });
+  }
+  if (!target || target.status !== "approved") {
+    return res.status(404).json({ error: "Rider not found." });
+  }
+  if (caller.id === target.id) {
+    return res.status(400).json({ error: "That's you!" });
+  }
+
+  logAudit({
+    riderId: target.id,
+    ...riderActor(caller),
+    action: "call",
+    details: `${riderLabel(caller)} called ${riderLabel(target)}`,
+  });
+  res.json({ name: target.name, mobileNumber: target.mobileNumber });
+});
+
+// Admin broadcasts addressed to this rider, newest first.
+router.get("/:id/messages", (req, res) => {
+  const rider = readTable("riders").find((r) => r.id === req.params.id);
+  if (!rider) return res.status(404).json({ error: "Not found." });
+
+  const rows = db
+    .prepare(
+      `SELECT id, body, createdAt FROM messages
+       WHERE recipientIds LIKE ? ORDER BY createdAt DESC LIMIT 20`
+    )
+    .all(`%"${rider.id}"%`);
+  res.json(rows);
 });
 
 // Public: the approved-rider board, ranked by total practice distance. Only

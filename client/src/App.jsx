@@ -9,6 +9,9 @@ import AdminRiderDetail from "./pages/AdminRiderDetail.jsx";
 import AdminAddRider from "./pages/AdminAddRider.jsx";
 import AdminLiveMap from "./pages/AdminLiveMap.jsx";
 import AdminFlaggedRides from "./pages/AdminFlaggedRides.jsx";
+import AdminHelpDesk from "./pages/AdminHelpDesk.jsx";
+import AdminMessages from "./pages/AdminMessages.jsx";
+import AdminAuditLog from "./pages/AdminAuditLog.jsx";
 import TrackRide from "./pages/TrackRide.jsx";
 import FindMyLink from "./pages/FindMyLink.jsx";
 
@@ -26,6 +29,9 @@ export default function App() {
         <Route path="/admin/riders/:id" element={<AdminRiderDetail />} />
         <Route path="/admin/live" element={<AdminLiveMap />} />
         <Route path="/admin/flagged" element={<AdminFlaggedRides />} />
+        <Route path="/admin/help" element={<AdminHelpDesk />} />
+        <Route path="/admin/messages" element={<AdminMessages />} />
+        <Route path="/admin/audit" element={<AdminAuditLog />} />
         <Route path="/rides" element={<FindMyLink />} />
         <Route path="/rides/:riderId" element={<TrackRide />} />
       </Routes>

@@ -127,7 +127,10 @@ export default function AdminLiveMap() {
                   </div>
                   <a
                     href={`tel:${r.mobileNumber}`}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      api.adminLogCall(r.riderId, "mobile");
+                    }}
                     className="pill bg-surface px-2.5 py-1 text-ink"
                   >
                     📞

@@ -71,6 +71,35 @@ db.exec(`
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL
   );
+
+  -- Append-only activity trail. riderId is the rider the event is about;
+  -- actorType/actorId say who did it (a rider, an admin, or the system).
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    riderId TEXT,
+    actorType TEXT NOT NULL,
+    actorId TEXT,
+    actorName TEXT,
+    action TEXT NOT NULL,
+    details TEXT,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs (createdAt);
+  CREATE INDEX IF NOT EXISTS idx_audit_rider ON audit_logs (riderId, createdAt);
+  CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs (actorId, createdAt);
+
+  -- Admin broadcasts. recipientIds is a JSON array of rider ids, resolved
+  -- when the message is sent.
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    audience TEXT NOT NULL,
+    recipientIds TEXT NOT NULL,
+    recipientCount INTEGER NOT NULL,
+    sentBy TEXT,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_time ON messages (createdAt);
 `);
 
 export const COLUMNS = {

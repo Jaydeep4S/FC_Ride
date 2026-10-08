@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { db, readTable, mutateTable, nextBibNumber } from "../db.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { photosDir, photoUpload, validateRiderInput } from "../lib/riderShared.js";
+import { logAudit, adminActor, riderLabel } from "../lib/audit.js";
 
 const router = express.Router();
 const REVIEW_STATUSES = ["approved", "rejected", "removed"];
@@ -14,10 +15,19 @@ router.post("/login", (req, res) => {
   const { username, password } = req.body || {};
 
   if (username !== process.env.ADMIN_USERNAME || password !== process.env.ADMIN_PASSWORD) {
+    const tried = typeof username === "string" ? username.slice(0, 60) : null;
+    logAudit({
+      actorType: "admin",
+      actorId: tried,
+      actorName: tried,
+      action: "admin_login_failed",
+      details: `Failed admin login from ${req.ip}`,
+    });
     return res.status(401).json({ error: "Invalid username or password." });
   }
 
   const token = jwt.sign({ username }, process.env.JWT_SECRET, { expiresIn: "12h" });
+  logAudit({ actorType: "admin", actorId: username, actorName: username, action: "admin_login", details: `Logged in from ${req.ip}` });
   res.json({ token });
 });
 
@@ -76,6 +86,8 @@ router.post("/riders", requireAdmin, photoUpload.single("profilePhoto"), (req, r
     });
   });
 
+  logAudit({ riderId: id, ...adminActor(req), action: "added_by_admin", details: `Added ${b.name.trim()} as bib #${bibNumber}` });
+
   res.status(201).json({ id, bibNumber });
 });
 
@@ -101,6 +113,9 @@ router.delete("/riders/:id", requireAdmin, (req, res) => {
   })();
 
   if (row.photoPath) fs.unlink(path.join(photosDir, row.photoPath), () => {});
+  // Audit entries outlive the rider; the name goes in details since the rider
+  // row it would be looked up from is gone.
+  logAudit({ riderId: row.id, ...adminActor(req), action: "deleted", details: `Permanently deleted ${riderLabel(row)}` });
   res.json({ ok: true });
 });
 
@@ -144,9 +159,11 @@ router.patch("/riders/:id", requireAdmin, (req, res) => {
     return res.status(400).json({ error: "Status must be 'approved', 'rejected' or 'removed'." });
   }
 
+  let previous = null;
   const found = mutateTable("riders", (rows) => {
     const row = rows.find((r) => r.id === req.params.id);
     if (!row) return false;
+    previous = { status: row.status };
 
     if (status === "approved" && !row.bibNumber) {
       row.bibNumber = nextBibNumber();
@@ -154,11 +171,154 @@ router.patch("/riders/:id", requireAdmin, (req, res) => {
     row.status = status;
     row.reviewNote = reviewNote || row.reviewNote || null;
     row.reviewedAt = new Date().toISOString();
+    previous.label = riderLabel(row);
     return true;
   });
 
   if (!found) return res.status(404).json({ error: "Not found." });
+  logAudit({
+    riderId: req.params.id,
+    ...adminActor(req),
+    action: status,
+    details: `${previous.label}: ${previous.status} → ${status}${reviewNote ? ` (${reviewNote})` : ""}`,
+  });
   res.json({ ok: true });
+});
+
+// The admin's phone does the actual dialing (a tel: link); this just records
+// that the call was placed.
+router.post("/riders/:id/call-log", requireAdmin, (req, res) => {
+  const rider = readTable("riders").find((r) => r.id === req.params.id);
+  if (!rider) return res.status(404).json({ error: "Not found." });
+
+  const emergency = req.body?.which === "emergency";
+  logAudit({
+    riderId: rider.id,
+    ...adminActor(req),
+    action: emergency ? "admin_call_emergency" : "admin_call",
+    details: emergency ? `Called emergency contact of ${riderLabel(rider)}` : `Called ${riderLabel(rider)}`,
+  });
+  res.json({ ok: true });
+});
+
+// Help desk: every SOS alert (active first), with the phone numbers an
+// admin needs to follow up. The public /api/alerts/active omits those.
+router.get("/alerts", requireAdmin, (req, res) => {
+  const which = req.query.status;
+  const riderById = new Map(readTable("riders").map((r) => [r.id, r]));
+
+  let rows = readTable("alerts");
+  if (which === "active") rows = rows.filter((a) => !a.resolvedAt);
+  if (which === "resolved") rows = rows.filter((a) => a.resolvedAt);
+
+  rows.sort((a, b) => !!a.resolvedAt - !!b.resolvedAt || new Date(b.createdAt) - new Date(a.createdAt));
+  res.json(
+    rows.slice(0, 300).map((a) => {
+      const rider = riderById.get(a.riderId);
+      return {
+        ...a,
+        riderName: rider?.name ?? "Deleted rider",
+        bibNumber: rider?.bibNumber ?? null,
+        mobileNumber: rider?.mobileNumber ?? null,
+        emergencyMobileNumber: rider?.emergencyMobileNumber ?? null,
+        bloodGroup: rider?.bloodGroup ?? null,
+      };
+    })
+  );
+});
+
+const AUDIENCES = ["approved", "pending", "all", "selected"];
+
+// Bulk message. Stored and shown on each recipient's tracker page; the
+// response also returns their numbers so the admin can optionally send the
+// same text as an SMS from their own phone.
+router.post("/messages", requireAdmin, (req, res) => {
+  const { body, audience, riderIds } = req.body || {};
+  const text = typeof body === "string" ? body.trim() : "";
+  if (!text) return res.status(400).json({ error: "Message can't be empty." });
+  if (text.length > 1000) return res.status(400).json({ error: "Keep messages under 1000 characters." });
+  if (!AUDIENCES.includes(audience)) return res.status(400).json({ error: "Pick who to send this to." });
+
+  const riders = readTable("riders");
+  let recipients;
+  if (audience === "selected") {
+    const wanted = new Set(Array.isArray(riderIds) ? riderIds : []);
+    recipients = riders.filter((r) => wanted.has(r.id));
+  } else if (audience === "all") {
+    recipients = riders.filter((r) => r.status === "approved" || r.status === "pending");
+  } else {
+    recipients = riders.filter((r) => r.status === audience);
+  }
+  if (recipients.length === 0) return res.status(400).json({ error: "No riders match that audience." });
+
+  const id = crypto.randomUUID();
+  const actor = adminActor(req);
+  db.prepare(
+    `INSERT INTO messages (id, body, audience, recipientIds, recipientCount, sentBy, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    text,
+    audience,
+    JSON.stringify(recipients.map((r) => r.id)),
+    recipients.length,
+    actor.actorName,
+    new Date().toISOString()
+  );
+
+  const to = recipients.length === 1 ? riderLabel(recipients[0]) : `${recipients.length} riders (${audience})`;
+  logAudit({
+    riderId: recipients.length === 1 ? recipients[0].id : null,
+    ...actor,
+    action: "message_sent",
+    details: `To ${to}: ${text.slice(0, 140)}`,
+  });
+
+  res.status(201).json({ id, recipientCount: recipients.length, numbers: recipients.map((r) => r.mobileNumber) });
+});
+
+router.get("/messages", requireAdmin, (_req, res) => {
+  const rows = db
+    .prepare("SELECT id, body, audience, recipientCount, sentBy, createdAt FROM messages ORDER BY createdAt DESC LIMIT 100")
+    .all();
+  res.json(rows);
+});
+
+// Audit trail. Filter by rider (events about them or done by them) and
+// action; page backwards with ?before=<createdAt of the last row seen>.
+router.get("/audit", requireAdmin, (req, res) => {
+  const { riderId, action, before } = req.query;
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+
+  const where = [];
+  const params = [];
+  if (riderId) {
+    where.push("(riderId = ? OR (actorType = 'rider' AND actorId = ?))");
+    params.push(riderId, riderId);
+  }
+  if (action) {
+    where.push("action = ?");
+    params.push(action);
+  }
+  if (before) {
+    where.push("createdAt < ?");
+    params.push(before);
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM audit_logs ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY createdAt DESC LIMIT ?`
+    )
+    .all(...params, limit);
+
+  const riderById = new Map(readTable("riders").map((r) => [r.id, r]));
+  res.json(
+    rows.map((r) => {
+      const rider = r.riderId ? riderById.get(r.riderId) : null;
+      return { ...r, riderName: rider ? riderLabel(rider) : null };
+    })
+  );
 });
 
 // Live map: each approved rider's most recent location ping. Riders who

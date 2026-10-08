@@ -6,7 +6,7 @@ import RideMap from "../components/RideMap.jsx";
 import StatBlock from "../components/StatBlock.jsx";
 import RideHistoryList from "../components/RideHistoryList.jsx";
 import DateRangeFilter from "../components/DateRangeFilter.jsx";
-import { haversineKm, formatDuration, isWithinDateRange } from "../lib/rideMath.js";
+import { haversineKm, formatDuration, isWithinDateRange, formatRelativeTime } from "../lib/rideMath.js";
 import {
   loadPendingLocations,
   savePendingLocations,
@@ -16,11 +16,13 @@ import {
   saveActiveRide,
   clearActiveRide,
 } from "../lib/offlineStore.js";
+import { setMyRiderId } from "../lib/myRider.js";
 
 const MIN_ACCURACY_M = 50;
 const SYNC_INTERVAL_MS = 20000;
 const LOCATION_BATCH_SIZE = 200;
 const STALE_RIDE_MS = 24 * 60 * 60 * 1000; // don't silently resume a days-old abandoned ride
+const MESSAGES_POLL_MS = 60000;
 
 function geoErrorMessage(err) {
   if (err.code === err.PERMISSION_DENIED) {
@@ -56,6 +58,7 @@ export default function TrackRide() {
   const [sosError, setSosError] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [messages, setMessages] = useState([]);
 
   const watchIdRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -66,7 +69,10 @@ export default function TrackRide() {
   useEffect(() => {
     api
       .getStatus(riderId)
-      .then(setRider)
+      .then((data) => {
+        setRider(data);
+        setMyRiderId(riderId);
+      })
       .catch((err) => {
         // A TypeError means the request never reached the server (offline,
         // opened from the cached app shell) — not proof the rider doesn't
@@ -79,6 +85,22 @@ export default function TrackRide() {
       .getRiderRides(riderId)
       .then(setRides)
       .catch(() => {});
+  }, [riderId]);
+
+  // Admin broadcasts. Polled so a message sent mid-ride still shows up.
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .getMyMessages(riderId)
+        .then((data) => alive && setMessages(data))
+        .catch(() => {});
+    load();
+    const interval = setInterval(load, MESSAGES_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
   }, [riderId]);
 
   // Pick up any location pings / finished rides that never made it to the
@@ -377,6 +399,20 @@ export default function TrackRide() {
             >
               Dismiss
             </button>
+          </div>
+        )}
+
+        {messages.length > 0 && (
+          <div className="card border-2 border-primary/30 p-5">
+            <p className="mb-3 font-display text-base font-extrabold text-ink">📢 Messages from the organisers</p>
+            <ul className="space-y-2">
+              {messages.slice(0, 5).map((m) => (
+                <li key={m.id} className="rounded-2xl bg-primary/5 p-3">
+                  <p className="whitespace-pre-wrap text-sm text-ink">{m.body}</p>
+                  <p className="mt-1 text-xs text-muted">{formatRelativeTime(m.createdAt)}</p>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

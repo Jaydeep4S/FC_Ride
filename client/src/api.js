@@ -15,6 +15,10 @@ export function setAdminToken(token) {
   else localStorage.removeItem("fc_ride_squad_admin_token");
 }
 
+export function isSessionError(err) {
+  return err.message.includes("Invalid or expired") || err.message.includes("Missing admin");
+}
+
 function authHeaders() {
   const token = getAdminToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -157,6 +161,63 @@ export const api = {
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ riderId }),
     });
+    return handle(res);
+  },
+
+  // Returns { name, mobileNumber } for an approved squad mate; the caller
+  // must be an approved rider themselves.
+  async callRider(targetId, callerId) {
+    const res = await fetch(`${BASE}/riders/${targetId}/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callerId }),
+    });
+    return handle(res);
+  },
+
+  async getMyMessages(riderId) {
+    const res = await fetch(`${BASE}/riders/${riderId}/messages`);
+    return handle(res);
+  },
+
+  // Fire-and-forget: records that the admin dialed this rider. keepalive lets
+  // it finish even as the tel: link hands off to the phone app.
+  adminLogCall(riderId, which = "mobile") {
+    fetch(`${BASE}/admin/riders/${riderId}/call-log`, {
+      method: "POST",
+      keepalive: true,
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ which }),
+    }).catch(() => {});
+  },
+
+  async adminListAlerts(status) {
+    const qs = status && status !== "all" ? `?status=${status}` : "";
+    const res = await fetch(`${BASE}/admin/alerts${qs}`, { headers: authHeaders() });
+    return handle(res);
+  },
+
+  async adminSendMessage(body, audience, riderIds) {
+    const res = await fetch(`${BASE}/admin/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ body, audience, riderIds }),
+    });
+    return handle(res);
+  },
+
+  async adminListMessages() {
+    const res = await fetch(`${BASE}/admin/messages`, { headers: authHeaders() });
+    return handle(res);
+  },
+
+  async adminAudit({ riderId, action, before, limit } = {}) {
+    const qs = new URLSearchParams();
+    if (riderId) qs.set("riderId", riderId);
+    if (action) qs.set("action", action);
+    if (before) qs.set("before", before);
+    if (limit) qs.set("limit", String(limit));
+    const res = await fetch(`${BASE}/admin/audit?${qs}`, { headers: authHeaders() });
     return handle(res);
   },
 

@@ -2,6 +2,7 @@ import express from "express";
 import crypto from "node:crypto";
 import { readTable, mutateTable } from "../db.js";
 import { detectSuspiciousSpeed } from "../lib/cheatDetection.js";
+import { logAudit, riderActor } from "../lib/audit.js";
 
 const router = express.Router();
 
@@ -79,6 +80,13 @@ router.post("/", (req, res) => {
       flagged: flagged ? 1 : 0,
       flagReason: reason,
     });
+  });
+
+  logAudit({
+    riderId,
+    ...riderActor(rider),
+    action: flagged ? "ride_flagged" : "ride_saved",
+    details: `${distanceKm.toFixed(2)} km at ${avgSpeedKmh.toFixed(1)} km/h${flagged ? ` — ${reason}` : ""}`,
   });
 
   res.status(201).json({ id });

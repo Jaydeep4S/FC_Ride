@@ -3,13 +3,22 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, getAdminToken, setAdminToken } from "../api.js";
 import Avatar from "../components/Avatar.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
+import AdminCallButtons from "../components/AdminCallButtons.jsx";
 
 const TABS = [
+  { key: "all", label: "All riders", icon: "📋" },
   { key: "pending", label: "Pending", icon: "⏳" },
   { key: "approved", label: "Approved", icon: "✅" },
   { key: "rejected", label: "Rejected", icon: "❌" },
   { key: "removed", label: "Removed", icon: "🗑️" },
-  { key: "all", label: "All riders", icon: "📋" },
+];
+
+const TOOL_LINKS = [
+  { to: "/admin/live", label: "Live Map", short: "Live", icon: "🛰️", tone: "bg-night text-white hover:opacity-90" },
+  { to: "/admin/help", label: "Help Desk", short: "Help", icon: "🆘", tone: "bg-red-600 text-white hover:opacity-90" },
+  { to: "/admin/messages", label: "Bulk Message", short: "Message", icon: "📢", tone: "bg-primary/10 text-primary hover:bg-primary/20" },
+  { to: "/admin/audit", label: "Audit Log", short: "Audit", icon: "📜", tone: "bg-surface text-ink hover:bg-black/5" },
+  { to: "/admin/flagged", label: "Flagged Rides", short: "Flagged", icon: "🚩", tone: "bg-red-50 text-red-600 hover:bg-red-100" },
 ];
 
 function calcAge(birthDate) {
@@ -33,7 +42,7 @@ function StatCard({ icon, label, value, tone }) {
 }
 
 export default function AdminDashboard() {
-  const [tab, setTab] = useState("pending");
+  const [tab, setTab] = useState("all");
   const [riders, setRiders] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -157,18 +166,15 @@ export default function AdminDashboard() {
             >
               ➕ Add rider
             </Link>
-            <Link
-              to="/admin/live"
-              className="mt-2 flex items-center gap-3 rounded-2xl bg-night px-3 py-2.5 text-left font-display text-sm font-bold text-white transition hover:opacity-90"
-            >
-              🛰️ Live Map
-            </Link>
-            <Link
-              to="/admin/flagged"
-              className="mt-2 flex items-center gap-3 rounded-2xl bg-red-50 px-3 py-2.5 text-left font-display text-sm font-bold text-red-600 transition hover:bg-red-100"
-            >
-              🚩 Flagged Rides
-            </Link>
+            {TOOL_LINKS.map((l) => (
+              <Link
+                key={l.to}
+                to={l.to}
+                className={`mt-2 flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left font-display text-sm font-bold transition ${l.tone}`}
+              >
+                {l.icon} {l.label}
+              </Link>
+            ))}
             <button
               onClick={logout}
               className="mt-2 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left font-display text-sm font-bold text-muted hover:bg-surface"
@@ -177,18 +183,22 @@ export default function AdminDashboard() {
             </button>
           </div>
 
-          <div className="flex items-center justify-between gap-2 lg:hidden">
-            <h1 className="font-display text-2xl font-extrabold text-ink">Admin 🛠️</h1>
-            <div className="flex gap-2">
-              <Link to="/admin/live" className="pill bg-night px-3 py-2 text-white">
-                🛰️ Live
-              </Link>
-              <Link to="/admin/flagged" className="pill bg-red-50 px-3 py-2 text-red-600">
-                🚩 Flagged
-              </Link>
+          <div className="lg:hidden">
+            <div className="flex items-center justify-between gap-2">
+              <h1 className="font-display text-2xl font-extrabold text-ink">Admin 🛠️</h1>
               <button onClick={logout} className="btn-ghost px-4 py-2 text-sm">
                 Log out
               </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link to="/admin/riders/new" className="pill bg-primary px-3 py-2 text-white">
+                ➕ Add
+              </Link>
+              {TOOL_LINKS.map((l) => (
+                <Link key={l.to} to={l.to} className={`pill px-3 py-2 ${l.tone}`}>
+                  {l.icon} {l.short}
+                </Link>
+              ))}
             </div>
           </div>
         </aside>
@@ -263,6 +273,11 @@ export default function AdminDashboard() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
+                  <AdminCallButtons
+                    riderId={r.id}
+                    mobileNumber={r.mobileNumber}
+                    emergencyMobileNumber={r.emergencyMobileNumber}
+                  />
                   <Link to={`/admin/riders/${r.id}`} className="pill bg-primary/10 px-3 py-1.5 text-primary">
                     📊 View details & rides
                   </Link>

@@ -6,6 +6,8 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import StatBlock from "../components/StatBlock.jsx";
 import RideHistoryList from "../components/RideHistoryList.jsx";
 import DateRangeFilter from "../components/DateRangeFilter.jsx";
+import AdminCallButtons from "../components/AdminCallButtons.jsx";
+import AuditList from "../components/AuditList.jsx";
 import { isWithinDateRange } from "../lib/rideMath.js";
 
 function calcAge(birthDate) {
@@ -26,17 +28,20 @@ export default function AdminRiderDetail() {
   const [copied, setCopied] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [activity, setActivity] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [riderData, rideData] = await Promise.all([
+      const [riderData, rideData, auditData] = await Promise.all([
         api.adminGetRider(id),
         api.adminGetRiderRides(id),
+        api.adminAudit({ riderId: id, limit: 50 }),
       ]);
       setRider(riderData);
       setRides(rideData);
+      setActivity(auditData);
     } catch (err) {
       if (err.message.includes("Invalid or expired") || err.message.includes("Missing admin")) {
         setAdminToken(null);
@@ -160,6 +165,11 @@ export default function AdminRiderDetail() {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
+          <AdminCallButtons
+            riderId={id}
+            mobileNumber={rider.mobileNumber}
+            emergencyMobileNumber={rider.emergencyMobileNumber}
+          />
           <button onClick={copyTrackingLink} className="pill bg-surface px-3 py-1.5 text-ink">
             {copied ? "✅ Copied!" : "🔗 Copy tracking link"}
           </button>
@@ -239,6 +249,16 @@ export default function AdminRiderDetail() {
               : "No rides in that date range."
           }
         />
+      </div>
+
+      <div className="card mt-5 p-5">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="font-display text-lg font-extrabold text-ink">Activity</h2>
+          <Link to="/admin/audit" className="text-sm font-bold text-primary">
+            Full audit log →
+          </Link>
+        </div>
+        <AuditList entries={activity} showRider={false} />
       </div>
     </div>
   );

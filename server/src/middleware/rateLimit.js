@@ -1,7 +1,8 @@
-const buckets = new Map();
-
 // Minimal in-memory rate limiter — fine for a single-process app like this one.
+// Each limiter keeps its own buckets, so hitting one route's limit doesn't
+// eat into another's.
 export function rateLimit({ windowMs, max }) {
+  const buckets = new Map();
   return (req, res, next) => {
     const key = req.ip;
     const now = Date.now();
