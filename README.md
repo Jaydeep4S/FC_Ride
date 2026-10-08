@@ -74,3 +74,19 @@ Any host that can run a small Node process + persist a folder works (a small VPS
 Railway, etc.). Build the frontend with `npm run build` inside `client/` and serve the `dist/`
 folder (e.g. via the same Express server, Nginx, or a static host), pointing it at the deployed
 API's URL.
+## Running with Docker
+
+```
+copy .env.example .env          # set SQLITE_WEB_PASSWORD
+copy server\.env.example server\.env   # set admin credentials + JWT_SECRET
+docker compose up -d --build
+```
+
+| Container  | What it is                                        | URL                      |
+|------------|---------------------------------------------------|--------------------------|
+| `frontend` | nginx serving the built React app, proxies `/api` | http://localhost:8080    |
+| `backend`  | Express API (internal only, port 4000)            | —                        |
+| `database` | sqlite-web UI over the SQLite file (localhost only) | http://localhost:8081  |
+
+The SQLite database lives in the `db-data` volume and rider photos in the `uploads` volume, so
+both survive `docker compose down` (but not `docker compose down -v`).

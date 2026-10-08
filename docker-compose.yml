@@ -1,0 +1,41 @@
+services:
+  frontend:
+    build: ./client
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build: ./server
+    env_file: ./server/.env
+    environment:
+      PORT: 4000
+    volumes:
+      - db-data:/app/data
+      - uploads:/app/uploads
+    expose:
+      - "4000"
+    restart: unless-stopped
+
+  # SQLite runs inside the backend process, so this container doesn't serve the
+  # app. It's a password-protected web UI on the same database file, for
+  # inspecting and editing data. Bound to localhost only.
+  database:
+    image: coleifer/sqlite-web
+    environment:
+      SQLITE_DATABASE: fc_ride_squad.sqlite
+      SQLITE_WEB_PASSWORD: ${SQLITE_WEB_PASSWORD:?Set SQLITE_WEB_PASSWORD in .env}
+    volumes:
+      - db-data:/data
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  uploads:
